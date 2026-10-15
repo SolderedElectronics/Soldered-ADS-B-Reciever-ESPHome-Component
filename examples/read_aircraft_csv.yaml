@@ -1,0 +1,64 @@
+# Reads the "#A:" aircraft reports the module sends in its default RUN state
+# and CSV protocol, and logs every one of them with whichever fields the module
+# had data for. Nothing needs configuring: the module starts sending aircraft
+# as soon as it is powered and hears any.
+#
+# Aircraft only show up within range of the antenna, so connect one and give
+# it a view of the sky.
+#
+# Using a different board? See custom_board_wiring.yaml.
+#
+# Product used is www.solde.red/333388
+#
+# Connections:
+#   The module is wired to the onboard ESP32-S3, nothing to connect.
+
+esphome:
+  name: adsb-read-aircraft-csv
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [soldered_adsb_receiver]
+
+# The module sits on IO17 (module TX) and IO18 (module RX) and leaves the
+# factory sending at 115200 baud
+uart:
+  id: adsb_uart
+  rx_pin: GPIO17
+  tx_pin: GPIO18
+  baud_rate: 115200
+  # Roomy enough for dense traffic between two loop() iterations
+  rx_buffer_size: 4096
+
+soldered_adsb_receiver:
+  id: adsb
+  uart_id: adsb_uart
+  reset_pin: GPIO21
+  # Runs once per decoded aircraft update
+  on_aircraft:
+    - lambda: |-
+        char text[192];
+        size_t n = snprintf(text, sizeof(text), "ICAO %s", x.icao);
+        if (x.callsign[0] != '\0')
+          n += snprintf(text + n, sizeof(text) - n, "  call=%s", x.callsign);
+        if (x.has_position)
+          n += snprintf(text + n, sizeof(text) - n, "  lat=%.5f lon=%.5f", x.lat, x.lon);
+        if (x.has_alt_baro)
+          n += snprintf(text + n, sizeof(text) - n, "  alt_baro=%ldft", (long) x.alt_baro);
+        if (x.has_vel_h)
+          n += snprintf(text + n, sizeof(text) - n, "  vel=%.2fkt", x.vel_h);
+        if (x.squawk[0] != '\0')
+          n += snprintf(text + n, sizeof(text) - n, "  squawk=%s", x.squawk);
+        snprintf(text + n, sizeof(text) - n, "  on_ground=%s  crc_valid=%s", x.on_ground() ? "yes" : "no",
+                 x.crc_valid ? "yes" : "no");
+        ESP_LOGI("aircraft", "%s", text);

@@ -1,0 +1,107 @@
+# Walks through the whole state machine of the module: hardware RESET ->
+# BOOTLOADER -> RUN -> CONFIGURATION -> BOOTLOADER (locked) -> RUN, using the
+# RESET pin (IO21 on this board) and the lock to hold the module in BOOTLOADER
+# on purpose.
+#
+# Every step is queued by the on_boot lambda and runs in order in the
+# background; queue_delay() stands in for a delay without blocking anything.
+#
+# Product used is www.solde.red/333388
+#
+# Connections:
+#   The module is wired to the onboard ESP32-S3, nothing to connect.
+
+esphome:
+  name: adsb-state-machine-and-lock
+  on_boot:
+    then:
+      - lambda: |-
+          // How long the RESET pin is held, and how long the module then stays in BOOTLOADER
+          const uint32_t reset_pulse_ms = 20;
+          const uint32_t bootloader_hold_ms = 4000;
+          // Time the module is given to switch state after a command
+          const uint32_t state_switch_ms = 500;
+
+          ESP_LOGI("state_machine", "Hardware-resetting the module (RESET pin)...");
+          if (id(adsb).hardware_reset(reset_pulse_ms, true)) {
+            // BOOTLOADER holds for about 3 s at the fixed 115200 baud, then the
+            // module moves on to RUN unless it is locked. Wait it out before
+            // talking to it
+            id(adsb).queue_delay(bootloader_hold_ms);
+          } else {
+            ESP_LOGW("state_machine", "No RESET pin configured, skipping the hardware reset");
+          }
+
+          // RUN -> CONFIGURATION. If this fails, everything queued after it is dropped
+          id(adsb).enter_configuration([](bool success) {
+            ESP_LOGI("state_machine", "RUN -> CONFIGURATION: %s", success ? "OK" : "FAILED");
+          });
+
+          // Ask the module to confirm which state it is actually in
+          id(adsb).get_config_state([](bool success, const std::string &value) {
+            if (success)
+              ESP_LOGI("state_machine", "AT+CONFIG? = %s", value.c_str());
+          });
+
+          // CONFIGURATION -> BOOTLOADER, this also sets AT+LOCK=1
+          id(adsb).reboot_to_bootloader([](bool success) {
+            ESP_LOGI("state_machine", "CONFIGURATION -> BOOTLOADER: %s", success ? "OK" : "FAILED");
+          });
+
+          // BOOTLOADER always runs at the fixed 115200 baud, same as CONFIGURATION
+          id(adsb).queue_delay(state_switch_ms);
+
+          // Confirm the module really is in BOOTLOADER now
+          id(adsb).is_bootloader([](bool success, const std::string &value) {
+            if (success)
+              ESP_LOGI("state_machine", "AT+BOOT? = %s", value == "1" ? "1 (BOOTLOADER)" : "0 (CONFIGURATION)");
+          });
+
+          // The lock should be set, since rebooting to the bootloader sets it
+          id(adsb).get_lock([](bool success, const std::string &value) {
+            if (success)
+              ESP_LOGI("state_machine", "AT+LOCK? = %s", value == "1" ? "1 (locked)" : "0 (unlocked)");
+          });
+
+          // Releasing the lock lets the module fall through to the RUN state, at
+          // its BAUDRATE setting, 115200 by default
+          id(adsb).set_lock(false, [](bool success) {
+            ESP_LOGI("state_machine", "Releasing the lock: %s", success ? "OK" : "FAILED");
+          });
+
+          id(adsb).queue_delay(state_switch_ms);
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [soldered_adsb_receiver]
+
+uart:
+  id: adsb_uart
+  rx_pin: GPIO17
+  tx_pin: GPIO18
+  baud_rate: 115200
+  rx_buffer_size: 4096
+
+soldered_adsb_receiver:
+  id: adsb
+  uart_id: adsb_uart
+  reset_pin: GPIO21
+  # Show the state markers the module sends along the way
+  on_line:
+    - lambda: |-
+        if (x.rfind("AT+", 0) == 0)
+          ESP_LOGI("module", "%s", x.c_str());
+  # Aircraft start showing up again once the module is back in RUN
+  on_aircraft:
+    - lambda: |-
+        ESP_LOGI("aircraft", "ICAO %s", x.icao);

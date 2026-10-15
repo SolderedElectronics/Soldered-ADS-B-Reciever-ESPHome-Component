@@ -1,0 +1,50 @@
+# Turns on and reads the two CSV statistics messages: system health ("#S:")
+# and ADS-B receiver health ("#AS:"). Handy for keeping an eye on CPU load,
+# uptime, received frame rate and PPS calibration in the field.
+#
+# Product used is www.solde.red/333388
+#
+# Connections:
+#   The module is wired to the onboard ESP32-S3, nothing to connect.
+
+esphome:
+  name: adsb-statistics
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [soldered_adsb_receiver]
+
+uart:
+  id: adsb_uart
+  rx_pin: GPIO17
+  tx_pin: GPIO18
+  baud_rate: 115200
+  rx_buffer_size: 4096
+
+soldered_adsb_receiver:
+  id: adsb
+  uart_id: adsb_uart
+  reset_pin: GPIO21
+  # Both statistics protocols are off by default, so turn them on at boot
+  system_statistics: CSV
+  adsb_statistics: CSV
+  # System statistics, sent once a second
+  on_system_stats:
+    - lambda: |-
+        ESP_LOGI("statistics", "[SYSTEM] CPU load=%.2f%%  uptime=%" PRIu32 "s  crc_valid=%s", x.cpu_load, x.uptime,
+                 x.crc_valid ? "yes" : "no");
+  # ADS-B receiver statistics, sent once a second
+  on_adsb_stats:
+    - lambda: |-
+        ESP_LOGI("statistics", "[ADS-B]  Mode-S fps=%" PRIu32 "  Mode-A/C fps=%" PRIu32 "  PPS calib=%.2f  crc_valid=%s",
+                 x.fpss, x.fpsac, x.calib, x.crc_valid ? "yes" : "no");

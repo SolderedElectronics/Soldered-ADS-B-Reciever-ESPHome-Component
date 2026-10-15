@@ -1,0 +1,60 @@
+# Writes every SYSTEM and ADS-B setting the SC1 supports: the decoded output
+# protocol (CSV or MAVLink), how often aircraft are reported, the statistics
+# protocols, the system log and the baud rate.
+#
+# Every setting given under soldered_adsb_receiver: is written at boot: the
+# component moves the module into the CONFIGURATION state, writes them, and
+# returns it to RUN, all without blocking the rest of the firmware. Settings
+# left out are not touched. Settings are kept by the module across power
+# cycles, so they only really need writing once.
+#
+# Product used is www.solde.red/333388
+#
+# Connections:
+#   The module is wired to the onboard ESP32-S3, nothing to connect.
+
+esphome:
+  name: adsb-configure-settings
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [soldered_adsb_receiver]
+
+uart:
+  id: adsb_uart
+  rx_pin: GPIO17
+  tx_pin: GPIO18
+  # Has to match the baud_rate setting below. If the module is still at a
+  # different one, it is found anyway and switched over
+  baud_rate: 115200
+  rx_buffer_size: 4096
+
+soldered_adsb_receiver:
+  id: adsb
+  uart_id: adsb_uart
+  reset_pin: GPIO21
+  # --- ADS-B settings ---
+  # Decoded output protocol: CSV, MAVLINK or NONE
+  decoded_protocol: CSV
+  # How often decoded aircraft are reported: ALWAYS_ONCE_PER_SECOND,
+  # ONCE_PER_SECOND_IF_UPDATED or IMMEDIATE_ON_POSITION_UPDATE
+  report_mode: IMMEDIATE_ON_POSITION_UPDATE
+  # ADS-B receiver statistics, frames per second and PPS calibration, see
+  # statistics.yaml. CSV or NONE
+  adsb_statistics: CSV
+  # --- SYSTEM settings ---
+  system_log: false
+  # System statistics, CPU load and uptime. CSV or NONE
+  system_statistics: CSV
+  # BAUDRATE of the RUN state: 57600, 115200, 921600 or 3000000
+  baud_rate: 115200

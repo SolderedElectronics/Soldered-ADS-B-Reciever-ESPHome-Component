@@ -1,0 +1,95 @@
+# Enters the CONFIGURATION state and logs the serial number, the firmware
+# version, the device type, the full AT+HELP text and the current AT+SETTINGS?
+# dump, then returns the module to the RUN state.
+#
+# Every raw line the module sends is logged as well, which shows what is
+# really happening on the wire.
+#
+# The commands are queued by the on_boot lambda and run one after another in
+# the background, each reporting back through its own callback, so the rest
+# of the firmware keeps running meanwhile.
+#
+# Product used is www.solde.red/333388
+#
+# Connections:
+#   The module is wired to the onboard ESP32-S3, nothing to connect.
+
+esphome:
+  name: adsb-device-info
+  on_boot:
+    then:
+      - lambda: |-
+          // Settings can only be read or written in the CONFIGURATION state
+          id(adsb).enter_configuration([](bool success) {
+            ESP_LOGI("device_info", "Entering CONFIGURATION state: %s", success ? "OK" : "FAILED");
+          });
+
+          // Read the serial number of the module
+          id(adsb).get_serial_number([](bool success, const std::string &value) {
+            if (success)
+              ESP_LOGI("device_info", "Serial number: %s", value.c_str());
+          });
+
+          // Read the firmware version currently installed
+          id(adsb).get_firmware_version([](bool success, const std::string &value) {
+            if (success)
+              ESP_LOGI("device_info", "Firmware version: %s", value.c_str());
+          });
+
+          // Read the device type the module reports
+          id(adsb).get_device_type([](bool success, const std::string &value) {
+            if (success)
+              ESP_LOGI("device_info", "Device type: %s", value.c_str());
+          });
+
+          // Simple connectivity check, the module should always answer AT+OK
+          id(adsb).test([](bool success) {
+            ESP_LOGI("device_info", "Connection test (AT+TEST): %s", success ? "OK" : "FAILED");
+          });
+
+          // Ask the module to list every setting and its current value. The
+          // reply runs to a few kB, so it is shown line by line by on_line below
+          id(adsb).get_all_settings([](bool success, const std::string &value) {
+            ESP_LOGI("device_info", "AT+SETTINGS? returned %u bytes", (unsigned) value.size());
+          });
+
+          // Ask the module for its full built-in help text, also shown by on_line
+          id(adsb).get_full_help([](bool success, const std::string &value) {
+            ESP_LOGI("device_info", "AT+HELP returned %u bytes", (unsigned) value.size());
+          });
+
+          // Leave CONFIGURATION and resume normal aircraft tracking at the
+          // `uart:` baud rate, which must match the BAUDRATE setting shown above
+          id(adsb).exit_configuration([](bool success) {
+            ESP_LOGI("device_info", "Returning to RUN state: %s", success ? "OK" : "FAILED");
+          });
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [soldered_adsb_receiver]
+
+uart:
+  id: adsb_uart
+  rx_pin: GPIO17
+  tx_pin: GPIO18
+  baud_rate: 115200
+  rx_buffer_size: 4096
+
+soldered_adsb_receiver:
+  id: adsb
+  uart_id: adsb_uart
+  reset_pin: GPIO21
+  # Log every raw line the module sends
+  on_line:
+    - lambda: |-
+        ESP_LOGI("module", "%s", x.c_str());

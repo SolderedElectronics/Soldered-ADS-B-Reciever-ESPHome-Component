@@ -1,0 +1,52 @@
+# Shows how to drive a module that is not wired the way the Soldered ADS-B
+# 1090MHz Receiver board wires it (IO17/IO18, RESET on IO21). Point the `uart:`
+# bus at the pins the module is wired to:
+#
+#   rx_pin    - ESP32 pin wired to the TX pin of the module
+#   tx_pin    - ESP32 pin wired to the RX pin of the module
+#   reset_pin - ESP32 pin wired to the RESET pin of the module, leave it out if
+#               not connected
+#
+# Here the module sits on IO4/IO5 of a plain ESP32, with no RESET pin wired at
+# all. ESPHome picks a free UART peripheral on its own, away from the logger.
+#
+# Product used is www.solde.red/333388
+#
+# Connections:
+#   TT-SC1b      ESP32
+#   TX           GPIO4
+#   RX           GPIO5
+#   GND          GND
+
+esphome:
+  name: adsb-custom-board-wiring
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [soldered_adsb_receiver]
+
+# Change these to match how your module is wired
+uart:
+  id: adsb_uart
+  rx_pin: GPIO4 # Goes to the TX pin of the module
+  tx_pin: GPIO5 # Goes to the RX pin of the module
+  baud_rate: 115200
+  rx_buffer_size: 4096
+
+soldered_adsb_receiver:
+  id: adsb
+  uart_id: adsb_uart
+  # No reset_pin: RESET of the module is not connected
+  on_aircraft:
+    - lambda: |-
+        ESP_LOGI("aircraft", "ICAO %s", x.icao);

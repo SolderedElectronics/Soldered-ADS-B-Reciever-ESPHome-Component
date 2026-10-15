@@ -1,0 +1,71 @@
+# Switches the module to MAVLink output and decodes the ADSB_VEHICLE message it
+# sends for every tracked aircraft. Also shows the generic frame automation,
+# which runs for any MAVLink message the module sends and logs its raw payload
+# bytes.
+#
+# The output protocol is kept by the module across power cycles; set
+# decoded_protocol back to CSV (see configure_protocols_and_settings.yaml) to
+# switch back.
+#
+# Product used is www.solde.red/333388
+#
+# Connections:
+#   The module is wired to the onboard ESP32-S3, nothing to connect.
+
+esphome:
+  name: adsb-mavlink-adsb-vehicle
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [soldered_adsb_receiver]
+
+uart:
+  id: adsb_uart
+  rx_pin: GPIO17
+  tx_pin: GPIO18
+  baud_rate: 115200
+  rx_buffer_size: 4096
+
+soldered_adsb_receiver:
+  id: adsb
+  uart_id: adsb_uart
+  reset_pin: GPIO21
+  # The module sends CSV by default, so switch it to MAVLink at boot
+  decoded_protocol: MAVLINK
+  # One decoded ADSB_VEHICLE message per tracked aircraft
+  on_adsb_vehicle:
+    - lambda: |-
+        using namespace soldered_adsb_receiver;
+        char text[192];
+        size_t n = snprintf(text, sizeof(text), "ICAO %06" PRIX32, x.icao_address);
+        if (x.has_flag(VEHICLE_FLAG_VALID_CALLSIGN))
+          n += snprintf(text + n, sizeof(text) - n, "  call=%s", x.callsign);
+        if (x.has_flag(VEHICLE_FLAG_VALID_COORDS))
+          n += snprintf(text + n, sizeof(text) - n, "  lat=%.5f lon=%.5f", x.lat_degrees(), x.lon_degrees());
+        if (x.has_flag(VEHICLE_FLAG_VALID_ALTITUDE))
+          n += snprintf(text + n, sizeof(text) - n, "  alt=%.2fm", x.altitude_meters());
+        if (x.has_flag(VEHICLE_FLAG_VALID_VELOCITY))
+          n += snprintf(text + n, sizeof(text) - n, "  vel=%.2fm/s", x.hor_velocity / 100.0);
+        if (x.has_flag(VEHICLE_FLAG_VALID_SQUAWK))
+          n += snprintf(text + n, sizeof(text) - n, "  squawk=%u", x.squawk);
+        snprintf(text + n, sizeof(text) - n, "  tslc=%us", x.tslc);
+        ESP_LOGI("vehicle", "%s", text);
+  # Every MAVLink frame received, whatever its message id
+  on_mavlink_frame:
+    - lambda: |-
+        char payload[2 * soldered_adsb_receiver::MAVLINK_MAX_PAYLOAD_LEN + 1];
+        for (uint8_t i = 0; i < x.payload_len; i++)
+          snprintf(payload + 2 * i, 3, "%02X", x.payload[i]);
+        payload[2 * x.payload_len] = '\0';
+        ESP_LOGD("mavlink", "msgid=%" PRIu32 " sysid=%u crc_valid=%s payload=%s", x.msgid, x.sysid,
+                 x.crc_valid ? "yes" : "no", payload);
